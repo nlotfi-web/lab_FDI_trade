@@ -10,14 +10,13 @@
 # clear environment
 rm(list = ls())
 
- 
+
 # new packages we need for Census and BEA
 
-#install.packages("censusapi")
+install.packages("censusapi")
 library(censusapi)
-#install.packages('bea.R')
+install.packages('bea.R')
 library(bea.R)
-
 library(fredr)
 library(tidyverse)
 
@@ -82,13 +81,13 @@ indicators<-indicators$ParamValue
 #DiInvOutward: Financial transactions for outward direct investment (U.S. direc
 
 outward<-list('UserID' = beaKey,
-                 'Method' = 'GetData',
-                 'DatasetName' = 'ITA',
-                 'Indicator'='DiInvOutward',
-                 'AreaOrCountry' = 'All',
-                 'Year' = '2020,2021,2022',
-                 'Frequency' = 'A',
-                 'ResultFormat' = 'xml')
+              'Method' = 'GetData',
+              'DatasetName' = 'ITA',
+              'Indicator'='DiInvOutward',
+              'AreaOrCountry' = 'All',
+              'Year' = '2020,2021,2022',
+              'Frequency' = 'A',
+              'ResultFormat' = 'xml')
 
 outward<-beaGet(outward,asWide=FALSE)
 
@@ -99,13 +98,13 @@ ctry_params<-beaParamVals(beaKey,'ITA',"AreaOrCountry")
 ctry_params<-ctry_params$ParamValue
 
 outwardctry<-list('UserID' = beaKey,
-              'Method' = 'GetData',
-              'DatasetName' = 'ITA',
-              'Indicator'='DiInvOutward',
-              'AreaOrCountry' = 'Australia',
-              'Year' = '2022',
-              'Frequency' = 'A',
-              'ResultFormat' = 'xml')
+                  'Method' = 'GetData',
+                  'DatasetName' = 'ITA',
+                  'Indicator'='DiInvOutward',
+                  'AreaOrCountry' = 'Australia',
+                  'Year' = '2022',
+                  'Frequency' = 'A',
+                  'ResultFormat' = 'xml')
 
 # you cannot get the country data this way
 outwardctry<-beaGet(outwardctry,asWide=FALSE)
@@ -213,14 +212,14 @@ ggplot(data = inwardFDI, aes(x = reorder(Country, DataValue), y = DataValue, fil
 
 # Now try to get all inward FDI top and rank by country#
 allinward<-list('UserID' = beaKey,
-             'Method' = 'GetData',
-             'DatasetName' = 'MNE',
-             'DirectionOfInvestment'='Inward',
-             'Country' = 'all',
-             'Year' = '2021,2022',
-             'SeriesID' = 22,
-             'Classification'='Country',
-             'ResultFormat' = 'xml')
+                'Method' = 'GetData',
+                'DatasetName' = 'MNE',
+                'DirectionOfInvestment'='Inward',
+                'Country' = 'all',
+                'Year' = '2021,2022',
+                'SeriesID' = 22,
+                'Classification'='Country',
+                'ResultFormat' = 'xml')
 allinward<-(beaGet(allinward,asWide=FALSE))
 # now filter out the regional codes#
 country <- ctrylist %>%
@@ -281,7 +280,7 @@ imports_naics<-getCensus(
   CTY_CODE="1220",
   CTY_CODE="2010"
 )
- 
+
 
 #to really save time, we want the cumulative value, for the month of December
 #GEN_VAL_YR is cumulative imports for consumption by month
@@ -382,3 +381,70 @@ animated_plot <- p +
 anim <- animate(animated_plot, nframes = 100, fps = 10, width = 800, height = 600, start_pause=10, end_pause = 10, renderer = gifski_renderer())
 anim_save("top10_countries_over_time.gif", animation = anim)
 
+
+###############################
+# MY EDITS: TOP 10 US EXPORT DESTINATIONS BY COUNTRY AND YEAR
+# Mirrors Kyle's import-by-country code above, but uses the exports endpoint.
+# Imports use GEN_VAL_YR; exports use ALL_VAL_YR (annual export value).
+# Assignment asks specifically for the 2015 and 2025 top-10 lists.
+###############################
+
+# Pull total US exports by destination country and year.
+# MONTH = "12" gives the year-end cumulative (annual) value, same trick as imports.
+exports_cty_yr <- getCensus(
+  name = "timeseries/intltrade/exports/naics",
+  vars = c("ALL_VAL_YR", "YEAR", "CTY_CODE", "CTY_NAME"),
+  time = "from 2000",
+  MONTH = "12",
+  key = Sys.getenv("CENSUS_KEY"),
+  show_call = TRUE
+)
+
+head(exports_cty_yr)
+
+# Filter out region/aggregation codes (same screen Kyle used for imports)
+exports_cty_yr_clean <- exports_cty_yr %>%
+  filter(!(substr(CTY_CODE, 1, 1) == "0" | substr(CTY_CODE, 2, 2) == "X" | substr(CTY_CODE, 1, 1) == "-"))
+
+# Convert export value to numeric (billions USD) and year to numeric
+exports_cty_yr_clean <- exports_cty_yr_clean %>%
+  mutate(ALL_VAL_YR = as.numeric(ALL_VAL_YR) / 1000000000,
+         YEAR = as.numeric(YEAR))
+
+# Check for NAs introduced by conversion
+sum(is.na(exports_cty_yr_clean$ALL_VAL_YR))
+
+# Top 10 export destinations per year using slice_max
+top10_exports <- exports_cty_yr_clean %>%
+  group_by(YEAR) %>%
+  slice_max(order_by = ALL_VAL_YR, n = 10, with_ties = FALSE) %>%
+  arrange(YEAR, desc(ALL_VAL_YR))
+
+print(top10_exports)
+
+# Assign a rank within each year (for plotting)
+top10_exports <- top10_exports %>%
+  group_by(YEAR) %>%
+  arrange(-ALL_VAL_YR, CTY_NAME) %>%
+  mutate(rank = row_number()) %>%
+  ungroup()
+
+# Keep just the two years the assignment asks about: 2015 and 2025
+export_plot_data <- top10_exports %>%
+  filter(YEAR %in% c(2015, 2025))
+
+# Faceted graph: top 10 export destinations, 2015 vs 2025 side by side
+ggplot(export_plot_data, aes(group = CTY_NAME, y = rank)) +
+  geom_tile(aes(x = ALL_VAL_YR / 2, width = ALL_VAL_YR, height = .5,
+                color = CTY_NAME, fill = CTY_NAME), show.legend = FALSE) +
+  geom_text(aes(x = ALL_VAL_YR, y = rank, label = CTY_NAME),
+            nudge_x = 30, hjust = 0, size = 3, show.legend = FALSE) +
+  scale_y_reverse(breaks = 1:10, minor_breaks = NULL) +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.35))) +
+  facet_wrap(~ YEAR) +
+  labs(x = "Export Value (billions USD)", y = "Ranking by Exports",
+       title = "Top 10 Destinations for U.S. Exports: 2015 vs 2025") +
+  theme_minimal()
+
+# Save the export graph as a PNG into the project folder
+ggsave("top10_exports_2015_2025.png", width = 10, height = 5, dpi = 300)
